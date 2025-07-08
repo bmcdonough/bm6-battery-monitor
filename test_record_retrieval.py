@@ -101,7 +101,8 @@ async def test_record_retrieval(address):
                 print(f"  🔋 VOLTAGE DATA: {v}V, {t}°C, SoC:{s}%")
             elif voltage_data.get('format') == 'alternative':
                 candidates = voltage_data['voltage_candidates']
-                print(f"  ⚡ VOLTAGE CANDIDATES: {[f'{c[\"voltage\"]}V@pos{c[\"position\"]}' for c in candidates]}")
+                candidate_strs = [f"{c['voltage']}V@pos{c['position']}" for c in candidates]
+                print(f"  ⚡ VOLTAGE CANDIDATES: {candidate_strs}")
         else:
             print(f"  📦 Response: {decrypted[:32]}{'...' if len(decrypted) > 32 else ''}")
 
