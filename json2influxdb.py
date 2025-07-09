@@ -30,9 +30,10 @@ logger.addHandler(stderr_handler)
 
 # Handler for syslog
 try:
-    syslog_handler = SysLogHandler(address='/dev/log')
-    syslog_handler.setLevel(logging.ERROR) # Only send errors to syslog
-    syslog_formatter = logging.Formatter('json_to_influxdb: %(levelname)s: %(message)s')
+    syslog_handler = SysLogHandler(address='/dev/log', facility='user')
+    syslog_handler.setLevel(logging.DEBUG) # Only send errors to syslog
+    # syslog_formatter = logging.Formatter('json_to_influxdb: %(levelname)s: %(message)s')
+    syslog_formatter = logging.Formatter('%(filename)s[%(process)d] - [%(name)s:%(lineno)d] :: (%(funcName)s) %(levelname)s - %(message)s')
     syslog_handler.setFormatter(syslog_formatter)
     logger.addHandler(syslog_handler)
 except Exception as e:
