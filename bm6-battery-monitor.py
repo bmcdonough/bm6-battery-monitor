@@ -12,6 +12,7 @@ import asyncio
 import logging
 import re
 import sys
+import time
 from logging.handlers import SysLogHandler
 from typing import Dict, List, Tuple, Any, Optional
 from Crypto.Cipher import AES
@@ -24,6 +25,11 @@ BM6_COMMAND_VOLTAGE_TEMP = "d1550700000000000000000000000000"
 BM6_MESSAGE_PREFIX = "d15507"
 GATT_WRITE_CHAR = "FFF3"
 GATT_NOTIFY_CHAR = "FFF4"
+
+# Retry configuration
+MAX_RETRIES = 3
+RETRY_DELAY_BASE = 1.0  # Base delay in seconds
+DATA_TIMEOUT = 10  # Timeout for data retrieval in seconds
 
 # MAC address validation pattern
 MAC_ADDRESS_PATTERN = re.compile(r'^([0-9A-Fa-f]{2}[:-]){5}([0-9A-Fa-f]{2})$')
@@ -57,6 +63,37 @@ def is_valid_mac_address(mac: str) -> bool:
         bool: True if valid MAC address format, False otherwise
     """
     return bool(MAC_ADDRESS_PATTERN.match(mac))
+
+async def retry_with_backoff(func, *args, **kwargs):
+    """Retry a function with exponential backoff.
+    
+    Args:
+        func: Async function to retry
+        *args: Arguments to pass to function
+        **kwargs: Keyword arguments to pass to function
+        
+    Returns:
+        Result of successful function call
+        
+    Raises:
+        Exception: Last exception if all retries failed
+    """
+    last_exception = None
+    
+    for attempt in range(MAX_RETRIES):
+        try:
+            logger.debug(f"Attempt {attempt + 1}/{MAX_RETRIES}")
+            return await func(*args, **kwargs)
+        except Exception as e:
+            last_exception = e
+            if attempt < MAX_RETRIES - 1:
+                delay = RETRY_DELAY_BASE * (2 ** attempt)  # Exponential backoff
+                logger.warning(f"Attempt {attempt + 1} failed: {e}. Retrying in {delay:.1f}s...")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"All {MAX_RETRIES} attempts failed. Last error: {e}")
+    
+    raise last_exception
 
 async def scan_bm6(format: str) -> None:
     """Scan for BM6 devices and display results.
@@ -93,12 +130,14 @@ async def scan_bm6(format: str) -> None:
     elif format == "json":
         print(json.dumps(device_list))
 
-async def get_bm6_data(address: str, format: str) -> None:
-    """Connect to a BM6 device and retrieve voltage, temperature, and SoC data.
+async def _get_bm6_data_once(address: str) -> Dict[str, Any]:
+    """Connect to a BM6 device and retrieve voltage, temperature, and SoC data (single attempt).
     
     Args:
         address: BLE MAC address of the BM6 device
-        format: Output format ('ascii' or 'json')
+        
+    Returns:
+        Dict containing voltage, temperature, and soc data
         
     Note:
         Temperature readings are in Celsius and can be negative
@@ -183,7 +222,7 @@ async def get_bm6_data(address: str, format: str) -> None:
             # Wait for readings - need both voltage AND temperature
             logger.debug("Waiting for voltage and temperature readings...")
             timeout_counter = 0
-            max_timeout = 100  # 10 seconds at 0.1s intervals
+            max_timeout = int(DATA_TIMEOUT * 10)  # Convert to 0.1s intervals
             
             while (bm6_data["voltage"] is None or bm6_data["temperature"] is None) and timeout_counter < max_timeout:
                 await asyncio.sleep(0.1)
@@ -192,8 +231,8 @@ async def get_bm6_data(address: str, format: str) -> None:
                     logger.debug(f"Still waiting for data... ({timeout_counter/10:.1f}s)")
             
             if timeout_counter >= max_timeout:
-                logger.error("Timeout waiting for BM6 data")
-                raise TimeoutError("Timeout waiting for BM6 data")
+                logger.error(f"Timeout waiting for BM6 data after {DATA_TIMEOUT}s")
+                raise TimeoutError(f"Timeout waiting for BM6 data after {DATA_TIMEOUT}s")
             
             logger.debug("Successfully received all data")
 
@@ -206,21 +245,52 @@ async def get_bm6_data(address: str, format: str) -> None:
         logger.error(f"Error communicating with BM6 device: {e}")
         raise
 
-    # Output data
-    if format == "ascii":
-        print(f"Voltage: {bm6_data['voltage']}v")
-        print(f"Temperature: {bm6_data['temperature']}C")
-        print(f"SoC: {bm6_data['soc']}%")
-    elif format == "json":
-        print(json.dumps(bm6_data))
+    return bm6_data
+
+async def get_bm6_data(address: str, format: str) -> None:
+    """Connect to a BM6 device and retrieve voltage, temperature, and SoC data with retry logic.
+    
+    Args:
+        address: BLE MAC address of the BM6 device
+        format: Output format ('ascii' or 'json')
+        
+    Note:
+        Temperature readings are in Celsius and can be negative
+    """
+    logger.info(f"Attempting to connect to BM6 device at {address} (max {MAX_RETRIES} attempts)")
+    
+    try:
+        # Use retry mechanism for the core data retrieval
+        bm6_data = await retry_with_backoff(_get_bm6_data_once, address)
+        
+        # Output data
+        if format == "ascii":
+            print(f"Voltage: {bm6_data['voltage']}v")
+            print(f"Temperature: {bm6_data['temperature']}C")
+            print(f"SoC: {bm6_data['soc']}%")
+        elif format == "json":
+            print(json.dumps(bm6_data))
+            
+        logger.info("Successfully retrieved BM6 data")
+        
+    except Exception as e:
+        logger.error(f"Failed to retrieve BM6 data after {MAX_RETRIES} attempts: {e}")
+        raise
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Read data from BM6 BLE battery monitors")
     parser.add_argument("--format", choices=["ascii", "json"], default="ascii", help="Output format")
+    parser.add_argument("--retries", type=int, default=MAX_RETRIES, help=f"Number of retry attempts (default: {MAX_RETRIES})")
+    parser.add_argument("--timeout", type=float, default=DATA_TIMEOUT, help=f"Data timeout in seconds (default: {DATA_TIMEOUT})")
     req = parser.add_mutually_exclusive_group(required=True)
     req.add_argument("--address", metavar="<address>", help="Address of BM6 to poll data from")
     req.add_argument("--scan", action="store_true", help="Scan for available BM6 devices")
     args = parser.parse_args()
+    
+    # Update retry configuration from command line
+    global MAX_RETRIES, DATA_TIMEOUT
+    MAX_RETRIES = args.retries
+    DATA_TIMEOUT = args.timeout
     
     try:
         if args.address:
