@@ -403,19 +403,19 @@ async def main():
                 # Most likely based on embedded systems patterns
                 ("d1550600000000000000000000000000", "Command 06 - History List"),
                 ("d1550800000000000000000000000000", "Command 08 - History Data"),
-                ("d15510000000000000000000000000000", "Command 10 - Extended History"),
-                ("d15520000000000000000000000000000", "Command 20 - Bulk History"),
-                ("d15580000000000000000000000000000", "Command 80 - System History"),
+                ("d1551000000000000000000000000000", "Command 10 - Extended History"),
+                ("d1552000000000000000000000000000", "Command 20 - Bulk History"),
+                ("d1558000000000000000000000000000", "Command 80 - System History"),
                 
                 # Parameter variations of promising commands
-                ("d15506000100000000000000000000000", "Command 06 with param 01"),
-                ("d15506001000000000000000000000000", "Command 06 with param 10"),
-                ("d15508000100000000000000000000000", "Command 08 with param 01"),
-                ("d15508001000000000000000000000000", "Command 08 with param 10"),
+                ("d1550600010000000000000000000000", "Command 06 with param 01"),
+                ("d1550600100000000000000000000000", "Command 06 with param 10"),
+                ("d1550800010000000000000000000000", "Command 08 with param 01"),
+                ("d1550800100000000000000000000000", "Command 08 with param 10"),
                 
                 # Range-based requests
-                ("d155060000640000000000000000000000", "Command 06 - request 100 records"),
-                ("d155080000640000000000000000000000", "Command 08 - request 100 records"),
+                ("d1550600006400000000000000000000", "Command 06 - request 100 records"),
+                ("d1550800006400000000000000000000", "Command 08 - request 100 records"),
             ]
             
             findings = []
