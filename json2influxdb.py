@@ -80,7 +80,7 @@ def main():
         # This is a good way to catch connection/auth issues early
         try:
             health = client.health()
-            if health.status == "healthy":
+            if health.status == "pass":
                 logger.info(f"Successfully connected to InfluxDB. Version: {health.version}")
             else:
                 logger.error(f"InfluxDB is not healthy. Status: {health.status}, Message: {health.message}")
