@@ -268,7 +268,12 @@ class BM6ConservativeHistoryClient:
         
         summary = {
             'total_records': len(records),
-            'current_data': current_data,
+            'current_data': {
+                'voltage': current_data['voltage'],
+                'temperature': current_data['temperature'],
+                'soc': current_data['soc'],
+                'timestamp': current_data['timestamp'].isoformat()
+            } if current_data else None,
             'date_range': {
                 'start': min(timestamps).isoformat(),
                 'end': max(timestamps).isoformat(),
@@ -313,6 +318,11 @@ async def main():
         if args.summary_only:
             # Get summary only
             summary = await client.get_history_summary()
+            
+            # Convert datetime objects to strings for JSON serialization
+            if summary.get('current_data') and summary['current_data'].get('timestamp'):
+                summary['current_data']['timestamp'] = summary['current_data']['timestamp'].isoformat()
+            
             print("\n📊 HISTORY SUMMARY:")
             print(json.dumps(summary, indent=2))
             
