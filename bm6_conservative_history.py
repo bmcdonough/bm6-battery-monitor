@@ -205,31 +205,39 @@ class BM6ConservativeHistoryClient:
         # Try a few parameter variations of command 03 (conservative approach)
         print("  📊 Command 03 variations...")
         for param in [0x01, 0x02, 0x05]:
-            await asyncio.sleep(2.0)  # Wait between commands
+            await asyncio.sleep(3.0)  # Longer wait between commands
             
             command = f"d155030{param:01x}000000000000000000000000"
             responses = await self._send_command_safe(command, 3.0)
             
-            for response in responses:
-                voltages = extract_voltages_from_response(response['decrypted'])
-                
-                for i, v in enumerate(voltages):
-                    # Check if this is a new voltage value
-                    is_new = not any(abs(r.voltage - v['voltage']) < 0.01 for r in all_readings)
+            if responses:  # Only process if we got responses
+                for response in responses:
+                    voltages = extract_voltages_from_response(response['decrypted'])
                     
-                    if is_new:
-                        estimated_time = current_time - timedelta(hours=(len(all_readings) + i + 1))
+                    for i, v in enumerate(voltages):
+                        # Check if this is a new voltage value
+                        is_new = not any(abs(r.voltage - v['voltage']) < 0.01 for r in all_readings)
                         
-                        reading = HistoryReading(
-                            voltage=v['voltage'],
-                            timestamp=estimated_time,
-                            raw_data=response['decrypted'],
-                            source_command=f'03_param_{param:02x}',
-                            record_index=len(all_readings),
-                            confidence=v['confidence']
-                        )
-                        all_readings.append(reading)
-                        print(f"    New voltage: {v['voltage']}V (param {param:02x})")
+                        if is_new:
+                            estimated_time = current_time - timedelta(hours=(len(all_readings) + i + 1))
+                            
+                            reading = HistoryReading(
+                                voltage=v['voltage'],
+                                timestamp=estimated_time,
+                                raw_data=response['decrypted'],
+                                source_command=f'03_param_{param:02x}',
+                                record_index=len(all_readings),
+                                confidence=v['confidence']
+                            )
+                            all_readings.append(reading)
+                            print(f"    New voltage: {v['voltage']}V (param {param:02x})")
+            else:
+                print(f"    No response for parameter {param:02x}")
+                # Try to reconnect the service discovery if needed
+                try:
+                    await self.client.get_services()
+                except:
+                    pass
         
         # Sort by timestamp (newest first) and remove duplicates
         all_readings.sort(key=lambda x: x.timestamp, reverse=True)
@@ -272,7 +280,7 @@ class BM6ConservativeHistoryClient:
                 'voltage': current_data['voltage'],
                 'temperature': current_data['temperature'],
                 'soc': current_data['soc'],
-                'timestamp': current_data['timestamp'].isoformat()
+                'timestamp': current_data['timestamp'].isoformat() if hasattr(current_data['timestamp'], 'isoformat') else str(current_data['timestamp'])
             } if current_data else None,
             'date_range': {
                 'start': min(timestamps).isoformat(),
@@ -321,7 +329,8 @@ async def main():
             
             # Convert datetime objects to strings for JSON serialization
             if summary.get('current_data') and summary['current_data'].get('timestamp'):
-                summary['current_data']['timestamp'] = summary['current_data']['timestamp'].isoformat()
+                if hasattr(summary['current_data']['timestamp'], 'isoformat'):
+                    summary['current_data']['timestamp'] = summary['current_data']['timestamp'].isoformat()
             
             print("\n📊 HISTORY SUMMARY:")
             print(json.dumps(summary, indent=2))
