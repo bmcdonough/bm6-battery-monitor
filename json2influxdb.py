@@ -18,11 +18,12 @@ except ImportError:
 # --- Logging Configuration ---
 # Set up a custom logger
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO) # Set base level to INFO, errors will be ERROR
+# Initial level, will be adjusted by --debug flag
+logger.setLevel(logging.INFO)
 
 # Handler for stderr
 stderr_handler = logging.StreamHandler(sys.stderr)
-stderr_handler.setLevel(logging.INFO) # Set level for stderr output
+stderr_handler.setLevel(logging.INFO) # Initial level for stderr output
 stderr_formatter = logging.Formatter('%(levelname)s: %(message)s')
 stderr_handler.setFormatter(stderr_formatter)
 logger.addHandler(stderr_handler)
@@ -58,8 +59,16 @@ def main():
     parser.add_argument('--token', required=True, help='InfluxDB API token')
     parser.add_argument('--org', required=True, help='InfluxDB organization name')
     parser.add_argument('--bucket', required=True, help='InfluxDB bucket name')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging, showing parsed JSON and InfluxDB line protocol.')
+
 
     args = parser.parse_args()
+
+    # Adjust logging level if debug flag is set
+    if args.debug:
+        logger.setLevel(logging.DEBUG)
+        stderr_handler.setLevel(logging.DEBUG)
+        logger.debug("Debug logging enabled.")
 
     # Construct the InfluxDB URL
     influxdb_url = f"http://{args.ip}:{args.port}"
@@ -77,9 +86,9 @@ def main():
         write_api = client.write_api(write_options=SYNCHRONOUS)
 
         # Verify connection and authorization by attempting a health check
-        # This is a good way to catch connection/auth issues early
         try:
             health = client.health()
+            # Corrected: InfluxDB returns "pass" for healthy status
             if health.status == "pass":
                 logger.info(f"Successfully connected to InfluxDB. Version: {health.version}")
             else:
@@ -100,6 +109,8 @@ def main():
             if not line:
                 continue # Skip empty lines
 
+            logger.debug(f"Received raw JSON input: {line}")
+
             try:
                 data = json.loads(line)
             except json.JSONDecodeError as e:
@@ -107,41 +118,40 @@ def main():
                 logger.error(f"Raw input (printed to stderr): {line}")
                 continue # Continue to the next line
 
-            point = Point("json").time(datetime.now(timezone.utc)) # Measurement "json", current UTC time
+            # Measurement "json", current UTC time
+            point = Point("json").time(datetime.now(timezone.utc))
 
             if isinstance(data, dict):
+                logger.debug(f"Parsed JSON as dictionary: {data}")
                 # Handle JSON object: all key-value pairs become fields
                 for key, value in data.items():
                     # InfluxDB can handle various types directly, but ensure basic types
                     if isinstance(value, (int, float, bool, str)):
                         point.field(key, value)
                     else:
-                        # Log if a field type isn't directly supported or is complex
                         logger.warning(f"Skipping unsupported field type for key '{key}': {type(value)}. Value: {value}")
                 
             elif isinstance(data, list) and len(data) == 1 and \
                  isinstance(data[0], list) and len(data[0]) == 2:
                 # Handle specific array format: [["MAC_ADDRESS", RSSI_VALUE]]
+                logger.debug(f"Parsed JSON as specific array format: {data}")
                 value1, value2 = data[0][0], data[0][1]
 
                 # Process first value as MAC address tag
                 if isinstance(value1, str) and is_mac_address(value1):
                     point.tag("mac_address", value1)
+                    logger.debug(f"Added tag 'mac_address': '{value1}'")
                 else:
-                    logger.warning(f"First value in array is not a valid MAC address or type. "
-                                   f"Skipping as mac_address tag. Value: '{value1}'")
-                    # If not a MAC, we could consider making it a field or skipping this point entirely
-                    # For now, if mac_address tag logic fails, we'll still try to write RSSI if present.
-                    # Or, you could make this a critical error and 'continue'
+                    logger.warning(f"First value in array ('{value1}') is not a valid MAC address or type. "
+                                   f"Skipping as mac_address tag.")
                     
                 # Process second value as RSSI field
                 if isinstance(value2, (int, float)) and value2 < 0:
                     point.field("rssi", value2)
+                    logger.debug(f"Added field 'rssi': {value2}")
                 else:
-                    logger.warning(f"Second value in array is not a negative number for RSSI or type. "
-                                   f"Skipping as rssi field. Value: '{value2}'")
-                    # If RSSI logic fails, we might end up with a point with only a tag or no fields,
-                    # InfluxDB generally requires at least one field.
+                    logger.warning(f"Second value in array ('{value2}') is not a negative number for RSSI or type. "
+                                   f"Skipping as rssi field.")
 
             else:
                 logger.warning(f"Unsupported JSON format: {type(data)}. Skipping this input.")
@@ -153,17 +163,21 @@ def main():
                 logger.warning(f"No valid fields could be extracted from input: {line}. Skipping point.")
                 continue
 
+            # --- Debugging Output for InfluxDB Line Protocol ---
+            line_protocol = point.to_line_protocol().strip()
+            logger.debug(f"Prepared InfluxDB Line Protocol: {line_protocol}")
+
             # Write the point to InfluxDB
             try:
                 write_api.write(bucket=args.bucket, record=point)
-                # logger.info(f"Successfully wrote data to InfluxDB: {point.to_line_protocol().strip()}")
+                logger.info(f"Successfully wrote data to InfluxDB.")
             except ApiException as e:
                 logger.error(f"InfluxDB API error during write operation: {e.status} - {e.reason}")
                 logger.error(f"Response Body: {e.body}")
-                logger.error(f"Failed to write point: {point.to_line_protocol().strip()}")
+                logger.error(f"Failed to write point: {line_protocol}")
             except Exception as e:
                 logger.error(f"An unexpected error occurred during InfluxDB write: {e}")
-                logger.error(f"Failed to write point: {point.to_line_protocol().strip()}")
+                logger.error(f"Failed to write point: {line_protocol}")
 
     except KeyboardInterrupt:
         logger.info("Script interrupted by user. Exiting.")
