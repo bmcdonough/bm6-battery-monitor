@@ -30,9 +30,6 @@ logger.addHandler(stderr_handler)
 
 # Handler for syslog
 try:
-    # On most Linux systems, /dev/log is the default for syslog.
-    # On macOS, it might be /var/run/syslog.
-    # On Windows, you might need a different approach or a syslog server.
     syslog_handler = SysLogHandler(address='/dev/log')
     syslog_handler.setLevel(logging.ERROR) # Only send errors to syslog
     syslog_formatter = logging.Formatter('json_to_influxdb: %(levelname)s: %(message)s')
@@ -70,6 +67,8 @@ def main():
         stderr_handler.setLevel(logging.DEBUG)
         logger.debug("Debug logging enabled.")
 
+    logger.debug("Script is starting.") ## NEW DEBUG LINES
+
     # Construct the InfluxDB URL
     influxdb_url = f"http://{args.ip}:{args.port}"
     logger.info(f"Attempting to connect to InfluxDB at: {influxdb_url}")
@@ -88,8 +87,7 @@ def main():
         # Verify connection and authorization by attempting a health check
         try:
             health = client.health()
-            # Corrected: InfluxDB returns "pass" for healthy status
-            if health.status == "pass":
+            if health.status == "pass": # Corrected: InfluxDB returns "pass" for healthy status
                 logger.info(f"Successfully connected to InfluxDB. Version: {health.version}")
             else:
                 logger.error(f"InfluxDB is not healthy. Status: {health.status}, Message: {health.message}")
@@ -103,13 +101,19 @@ def main():
             logger.error(f"Please check --ip and --port. Exiting.")
             sys.exit(1)
 
+        logger.debug("InfluxDB client initialized. Now attempting to read from stdin.") ## NEW DEBUG LINES
+        
         # Read JSON from stdin line by line
+        line_count = 0 ## NEW DEBUG LINES
         for line in sys.stdin:
+            line_count += 1 ## NEW DEBUG LINES
+            logger.debug(f"Processing line {line_count}. Raw input: '{line.strip()}'") ## NEW DEBUG LINES
+
             line = line.strip()
             if not line:
                 continue # Skip empty lines
 
-            logger.debug(f"Received raw JSON input: {line}")
+            # logger.debug(f"Received raw JSON input: {line}") # This line is now effectively replaced by the one above
 
             try:
                 data = json.loads(line)
@@ -178,6 +182,8 @@ def main():
             except Exception as e:
                 logger.error(f"An unexpected error occurred during InfluxDB write: {e}")
                 logger.error(f"Failed to write point: {line_protocol}")
+
+        logger.debug(f"Finished reading from stdin. Total lines processed: {line_count}") ## NEW DEBUG LINES
 
     except KeyboardInterrupt:
         logger.info("Script interrupted by user. Exiting.")
